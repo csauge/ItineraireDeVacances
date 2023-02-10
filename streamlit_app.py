@@ -1,64 +1,46 @@
-import pandas as pd
-import requests
+from source_communes import SourceCommunes
+from source_poi import SourcePoi
 import streamlit as st
-#from sqlalchemy import create_engine
 
 
-KEY = '380d2fe9-2c9c-4190-a79e-8301b37d03fb'
-URL = 'https://diffuseur.datatourisme.fr/webservice/bfadcf44012b7156ca3e297b468c4f75/' + KEY
-DATABASE_URL = 'postgresql://postgres:password@localhost:5435/postgres'
+@st.cache_data
+def retrieve():
+    return SourcePoi().retrieve(), SourceCommunes().retrieve()
 
-@st.experimental_memo
-def load():
-    data = requests.get(URL).json()
-    return pd.json_normalize(data['@graph'])
+df_poi, df_communes = retrieve()
 
-df = load()
-columns = {
-    'dc:identifier': 'id',
-    '@id': 'url',
-    '@type': 'type',
-    'rdfs:label.@value': 'nom',
-    'rdfs:comment.@value': 'commentaire',
-    'hasContact.schema:email': 'contact_email',
-    'hasContact.schema:telephone': 'contact_telephone',
-    'hasContact.foaf:homepage': 'contact_homepage',
-    'isLocatedAt.schema:address.schema:streetAddress': 'adresse',
-    'isLocatedAt.schema:address.schema:addressLocality': 'ville',
-    'isLocatedAt.schema:address.schema:postalCode': 'code_postal',
-    'isLocatedAt.schema:geo.schema:latitude.@value': 'latitude',
-    'isLocatedAt.schema:geo.schema:longitude.@value': 'longitude',
-}
+st.sidebar.title("Itinéraire de vacances")
+jours = st.sidebar.slider(
+    label='Durée du séjour',
+    min_value=1,
+    max_value=15,
+    value=2,
+    step=1
+)
+jours = st.sidebar.slider(
+    label='Nombre de visites par jour',
+    min_value=1,
+    max_value=8,
+    value=4,
+    step=1
+)
+types = st.sidebar.multiselect(
+    "Types d'itinéraires", 
+    SourcePoi.TYPES.values(),
+    SourcePoi.TYPES.values())
 
-df = df[columns.keys()]  # Keep only useful columns
-df = df.rename(columns=columns)
-df = df.applymap(lambda x: ', '.join(x) if isinstance(x, list) else x)  # Transform lists into strings
+departement = st.sidebar.selectbox(
+    'Département', 
+    df_communes['departement'].unique()
+)
+commune = st.sidebar.selectbox(
+    'Commune', 
+    df_communes[df_communes['departement'] == departement]['commune'].unique()
+)
+df_communes = df_communes[df_communes['commune'] == commune]
+df_poi = df_poi[df_poi['type'].map(lambda x: any([t in x for t in types]))]
 
-categories = {
-    'WalkingTour': 'Itinéraire pédestre',
-    'CyclingTour': 'Itinéraire cyclable',
-    'HorseTour': 'Itinéraire équestre',
-    'RoadTour': 'Itinéraire routier',
-    'FluvialTour': 'Itinéraire fluvial ou maritime',
-    'UnderwaterRoute': 'Itinéraire sous-marin',
-    'Accommodation': 'Hébergement',
-    'FoodEstablishment': 'Restauration',
-    'CulturalSite': 'Site culturel',
-    'NaturalHeritage': 'Site naturel',
-    'SportsAndLeisurePlace': 'Site sportif, récréatif et de loisirs',
-}
-
-def categorie(type):
-    for c in categories.keys():
-        if c in type.split(', '):
-            return c
-    return None
-
-df['type'] = df['type'].apply(categorie)  # keep only one high-level categorie
-df = df.dropna(subset=['id', 'nom', 'longitude', 'latitude', 'type'])  # Suppress row with null mandatory data
-df = df.set_index('id', verify_integrity=True)  # Ensure column id contains unique values
-
-st.write("POI:", df.head(20))
-
-#with create_engine(DATABASE_URL).begin() as connection:
-#    df.to_sql('poi', connection, if_exists='replace')  # Load dataframe in postgresql
+st.write("POI (10 premiers)", df_poi.head(10))
+st.write("Commune", df_communes)
+st.map(df_poi[['latitude', 'longitude']])
+st.map(df_communes[['latitude', 'longitude']])
